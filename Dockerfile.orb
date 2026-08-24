@@ -1,0 +1,29 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    OPENCODE_DISABLE_AUTOUPDATE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg git ripgrep jq build-essential \
+    python3 python3-venv python3-pip openssh-client unzip less sudo gh \
+    php-cli php-mbstring php-xml php-curl php-zip php-sqlite3 \
+    postgresql postgresql-client redis-server \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG OPENCODE_VERSION=1.18.21
+RUN npm install -g opencode-ai@${OPENCODE_VERSION} && npm cache clean --force
+
+COPY orb-entrypoint.sh /usr/local/bin/orb-entrypoint.sh
+COPY orb-db-init.sh /usr/local/bin/orb-db-init.sh
+COPY orb-redis-init.sh /usr/local/bin/orb-redis-init.sh
+COPY bin/orb-config.mjs /usr/local/bin/orb-config.mjs
+RUN chmod +x /usr/local/bin/orb-entrypoint.sh /usr/local/bin/orb-db-init.sh /usr/local/bin/orb-redis-init.sh
+
+WORKDIR /workspace
+ENTRYPOINT ["orb-entrypoint.sh"]
