@@ -35,6 +35,14 @@ bash "$ORBS_BIN/launch-orb.sh" "<task>" [path/to/repo]
   Startup includes installs: allow several minutes before the `ready` line.
 - Options: `--no-terminal` (no tab), `--terminal wt|herdr|none`, `--no-task`.
 - The orb ID is printed at the end (`orb <id> ready`). Report it back to the user.
+- **To relay the agent's answer into your own conversation**, wait for completion and
+  print it:
+  ```bash
+  bash "$ORBS_BIN/orb.sh" await <id>
+  ```
+  It blocks until the orb's initial task is finished (`--timeout s`, default 900) then
+  prints the agent's final text answer. Use it whenever the user asks the orb something
+  whose result must come back to you (e.g. "launch an orb and list the files").
 
 ## Reopening / observing an orb
 
@@ -50,6 +58,7 @@ bash "$ORBS_BIN/attach-orb.sh" <id>
 ```bash
 bash "$ORBS_BIN/orb.sh" list
 bash "$ORBS_BIN/orb.sh" status <id>
+bash "$ORBS_BIN/orb.sh" await <id> [--timeout s]
 ```
 
 `status` shows: container, branch, volume, API port (`http://127.0.0.1:<port>`), health,

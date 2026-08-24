@@ -7,11 +7,26 @@ usage() {
 usage: orb.sh <command>
   list                    list registered orbs
   status <id>             show orb details (container, health, sessions)
+  await <id> [--timeout s]   wait for the orb's initial task to finish, then
+                             print the agent's final answer (for the launching
+                             agent to relay it; default timeout 900s)
   kill <id>               stop the orb container (work kept in its volume)
   remove <id> [--force]   delete container + volume + registry entry
                           (refuses if uncommitted or unpushed work exists, unless --force)
 EOF
   exit "${1:-0}"
+}
+
+# print "busy" or "idle" for session $SID, reading a /session/status payload on stdin
+session_busy_state() {
+  SID="$1" node -e '
+    let d="";
+    process.stdin.on("data",c=>d+=c).on("end",()=>{
+      let s={};try{s=JSON.parse(d||"{}")}catch(e){}
+      const v=s[process.env.SID];
+      const t=String((v&&v.type)||v||"idle").toLowerCase();
+      console.log(["busy","active","running","working","streaming","pending","retry"].includes(t)?"busy":"idle");
+    });'
 }
 
 check_unsaved_work() {
@@ -72,6 +87,50 @@ case "$cmd" in
     fi
     sessions="$(curl -sf "http://127.0.0.1:${port}/session/status" 2>/dev/null || true)"
     [ -n "$sessions" ] && printf 'sessions:   %s\n' "$sessions"
+    ;;
+  await)
+    id="${1:-}"
+    [ -n "$id" ] || usage 2
+    shift || true
+    timeout=900
+    if [ "${1:-}" = "--timeout" ]; then timeout="${2:-900}"; fi
+    id="${id#orb-}"
+    entry="$(node "$ORB_REGISTRY" get "$id" 2>/dev/null)" || die "orb $id not found"
+    port="$(jsonget "$entry" .port)"
+    sid="$(jsonget "$entry" .session)"
+    [ -n "$sid" ] || die "orb $id has no recorded session (launched with --no-task?)"
+    running="$(dockerw inspect -f '{{.State.Running}}' "orb-$id" 2>/dev/null || true)"
+    if [ "$running" != "true" ]; then
+      log "container stopped — starting it..."
+      dockerw start "orb-$id" >/dev/null 2>&1 || die "cannot start container orb-$id"
+      wait_health "$port" 90 "orb-$id"
+    fi
+    log "waiting for orb $id to finish its task (timeout ${timeout}s)..."
+    deadline=$(( $(date +%s) + timeout ))
+    while :; do
+      st="$(curl -sf -m 5 "http://127.0.0.1:${port}/session/status" 2>/dev/null | session_busy_state "$sid" || echo busy)"
+      if [ "$st" = "idle" ]; then
+        # double-check once: make sure the final message is fully persisted
+        sleep 2
+        st2="$(curl -sf -m 5 "http://127.0.0.1:${port}/session/status" 2>/dev/null | session_busy_state "$sid" || echo busy)"
+        [ "$st2" = "idle" ] && break
+        st="$st2"
+      fi
+      [ "$st" = "idle" ] && break
+      now="$(date +%s)"
+      [ "$now" -ge "$deadline" ] && die "timed out after ${timeout}s — the orb may still be working (attach-orb.sh $id to check, or re-run await)"
+      sleep 3
+    done
+    curl -sf -m 15 "http://127.0.0.1:${port}/session/$sid/message" | node -e '
+      let d="";
+      process.stdin.on("data",c=>d+=c).on("end",()=>{
+        const ms=JSON.parse(d||"[]");
+        const a=[...ms].reverse().find(m=>m.info.role==="assistant");
+        if(!a){console.error("(no assistant message found)");process.exit(1)}
+        const text=(a.parts||[]).filter(p=>p.type==="text").map(p=>p.text).join("\n");
+        if(!text.trim()){console.error("(assistant produced no text response — attach-orb.sh for details)");process.exit(1)}
+        console.log(text);
+      });'
     ;;
   kill)
     id="${1:-}"
