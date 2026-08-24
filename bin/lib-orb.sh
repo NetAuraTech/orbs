@@ -63,10 +63,14 @@ wait_health() {
     if [ -n "$name" ] && [ "$i" -ge 30 ] && [ $((i % 20)) -eq 0 ]; then
       if dockerw exec "$name" curl -sf -m 3 http://127.0.0.1:4096/global/health >/dev/null 2>&1; then
         if [ "$fw_warned" -eq 0 ]; then
-          log "server OK inside the container but host port not ready yet (Docker Desktop hiccup) — still waiting"
+          log "server OK inside the container but host port not ready yet (Docker Desktop hiccup)"
           fw_warned=1
         fi
       fi
+    fi
+    # keep the user informed while waiting (a silent multi-minute pause looks hung)
+    if [ "$fw_warned" = 1 ] && [ $((i % 40)) -eq 0 ]; then
+      log "still waiting for host port ${port}... ($((i / 2))s elapsed)"
     fi
     sleep 0.5
   done
